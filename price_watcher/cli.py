@@ -11,18 +11,23 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Steam application ID, for example 730.",
     )
+    parser.add_argument(
+        "--region",
+        default="us",
+        help="Steam region/country code, for example us, de, ro.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    price = fetch_game_price(args.app_id)
+    price = fetch_game_price(args.app_id, args.region)
 
     if price is None:
-        print("Price not found. The game may be free, unavailable, or hidden by Steam.")
+        print(f"{args.app_id}: price not found")
         return 1
 
-    print(price)
+    print(f"{price.app_id}: {price.formatted}")
     return 0
 
 

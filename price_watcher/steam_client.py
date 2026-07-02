@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -6,11 +7,20 @@ import requests
 STEAM_APPDETAILS_URL = "https://store.steampowered.com/api/appdetails"
 
 
-def fetch_game_price(app_id: int, region: str = "us") -> str | None:
+@dataclass(frozen=True)
+class GamePrice:
+    app_id: int
+    price_cents: int
+    currency: str | None
+    formatted: str
+    is_free: bool
+
+
+def fetch_game_price(app_id: int, region: str = "us") -> GamePrice | None:
     params = {
         "appids": app_id,
         "cc": region,
-        "filters": "price_overview",
+        "filters": "basic,price_overview",
     }
 
     try:
@@ -28,17 +38,36 @@ def fetch_game_price(app_id: int, region: str = "us") -> str | None:
     if not isinstance(game_data, dict):
         return None
 
+    is_free = game_data.get("is_free")
+    if is_free is True:
+        return GamePrice(
+            app_id=app_id,
+            price_cents=0,
+            currency=None,
+            formatted="free",
+            is_free=True,
+        )
+
     price_overview = game_data.get("price_overview")
     if not isinstance(price_overview, dict):
         return None
 
-    final_formatted = price_overview.get("final_formatted")
-    if isinstance(final_formatted, str) and final_formatted:
-        return final_formatted
-
     final_price = price_overview.get("final")
     currency = price_overview.get("currency")
-    if isinstance(final_price, int) and isinstance(currency, str):
-        return f"{final_price / 100:.2f} {currency}"
+    final_formatted = price_overview.get("final_formatted")
 
-    return None
+    if (
+        not isinstance(final_price, int)
+        or not isinstance(currency, str)
+        or not isinstance(final_formatted, str)
+        or not final_formatted
+    ):
+        return None
+
+    return GamePrice(
+        app_id=app_id,
+        price_cents=final_price,
+        currency=currency,
+        formatted=final_formatted,
+        is_free=False,
+    )
