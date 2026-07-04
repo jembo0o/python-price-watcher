@@ -2,6 +2,14 @@ import argparse
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from price_watcher.checker import (
+    PriceCheckResult,
+    build_price_drop_message,
+    check_watchlist_items,
+    format_check_result,
+    format_cents,
+)
+from price_watcher.notifier import send_telegram_message
 from price_watcher.watchlist import (
     DEFAULT_WATCHLIST_PATH,
     WatchItem,
@@ -83,11 +91,21 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_WATCHLIST_PATH,
         help="Path to watchlist JSON file.",
     )
+    watchlist_check_parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send a Telegram message when a target price is reached.",
+    )
     return parser.parse_args()
 
 
 def handle_price(app_id: int, region: str) -> int:
-    from price_watcher.steam_client import fetch_game_price
+    try:
+        from price_watcher.steam_client import fetch_game_price
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
 
     price = fetch_game_price(app_id, region)
 
@@ -110,7 +128,7 @@ def handle_watchlist_add(args: argparse.Namespace) -> int:
     upsert_watch_item(item, args.file)
     print(
         f"{item.app_id} [{item.region}] saved "
-        f"with target <= {_format_cents(item.target_price_cents)}"
+        f"with target <= {format_cents(item.target_price_cents)}"
     )
     return 0
 
@@ -123,37 +141,51 @@ def handle_watchlist_list(path: Path) -> int:
         return 0
 
     for item in items:
-        target = _format_cents(item.target_price_cents)
+        target = format_cents(item.target_price_cents)
         print(f"{item.app_id} [{item.region}] target <= {target}")
 
     return 0
 
 
-def handle_watchlist_check(path: Path) -> int:
-    from price_watcher.steam_client import fetch_game_price
-
+def handle_watchlist_check(path: Path, notify: bool = False) -> int:
     items = load_watchlist(path)
 
     if not items:
         print("Watchlist is empty.")
         return 0
 
-    failed_checks = 0
+    results = check_watchlist_items(items)
 
-    for item in items:
-        price = fetch_game_price(item.app_id, item.region)
-        if price is None:
-            print(f"{item.app_id} [{item.region}]: price not found")
-            failed_checks += 1
-            continue
+    for result in results:
+        print(format_check_result(result))
 
-        target = _format_cents(item.target_price_cents, price.currency)
-        if price.price_cents <= item.target_price_cents:
-            print(f"DROP: {item.app_id} [{item.region}] {price.formatted} <= {target}")
-        else:
-            print(f"WAIT: {item.app_id} [{item.region}] {price.formatted} > {target}")
+    if notify:
+        send_drop_notification(results)
 
+    failed_checks = sum(1 for result in results if result.price is None)
     return 1 if failed_checks else 0
+
+
+def send_drop_notification(results: list[PriceCheckResult]) -> None:
+    message = build_price_drop_message(results)
+    if message is None:
+        print("No price drops to notify.")
+        return
+
+    from price_watcher.config import load_config
+
+    config = load_config()
+    if not config.telegram_bot_token or not config.telegram_chat_id:
+        raise ValueError(
+            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set to use --notify"
+        )
+
+    send_telegram_message(
+        bot_token=config.telegram_bot_token,
+        chat_id=config.telegram_chat_id,
+        text=message,
+    )
+    print("Telegram notification sent.")
 
 
 def main() -> int:
@@ -164,6 +196,9 @@ def main() -> int:
     except ValueError as exc:
         print(f"Error: {exc}")
         return 2
+    except RuntimeError as exc:
+        print(f"Error: {exc}")
+        return 1
 
 
 def dispatch(args: argparse.Namespace) -> int:
@@ -185,7 +220,7 @@ def dispatch(args: argparse.Namespace) -> int:
         if args.watchlist_command == "list":
             return handle_watchlist_list(args.file)
         if args.watchlist_command == "check":
-            return handle_watchlist_check(args.file)
+            return handle_watchlist_check(args.file, args.notify)
 
         print("Choose a watchlist command: add, list, or check.")
         return 2
@@ -208,13 +243,6 @@ def _parse_price_to_cents(raw_price: str) -> int:
         raise ValueError("Target price must have no more than two decimal places")
 
     return int(cents)
-
-
-def _format_cents(price_cents: int, currency: str | None = None) -> str:
-    formatted = f"{price_cents / 100:.2f}"
-    if currency is None:
-        return formatted
-    return f"{formatted} {currency}"
 
 
 if __name__ == "__main__":

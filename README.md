@@ -42,3 +42,9 @@ Check the watchlist:
 ```bash
 python -m price_watcher.cli watchlist check
 ```
+
+Send a Telegram notification when a target price is reached:
+
+```bash
+python -m price_watcher.cli watchlist check --notify
+```
