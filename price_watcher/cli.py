@@ -1,21 +1,22 @@
 import argparse
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from price_watcher.checker import (
-    PriceCheckResult,
-    build_price_drop_message,
-    check_watchlist_items,
-    format_check_result,
     format_cents,
 )
-from price_watcher.notifier import send_telegram_message
+from price_watcher.notifier import get_telegram_chats, send_telegram_message
+from price_watcher.runner import run_watch_loop, run_watch_once
 from price_watcher.watchlist import (
     DEFAULT_WATCHLIST_PATH,
     WatchItem,
     load_watchlist,
     upsert_watch_item,
 )
+
+if TYPE_CHECKING:
+    from price_watcher.config import Config
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,6 +97,53 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Send a Telegram message when a target price is reached.",
     )
+
+    watch_parser = subparsers.add_parser(
+        "watch",
+        help="Continuously check the watchlist.",
+    )
+    watch_parser.add_argument(
+        "--file",
+        type=Path,
+        default=DEFAULT_WATCHLIST_PATH,
+        help="Path to watchlist JSON file.",
+    )
+    watch_parser.add_argument(
+        "--interval",
+        type=int,
+        help="Seconds between checks. Defaults to CHECK_INTERVAL_SECONDS.",
+    )
+    watch_parser.add_argument(
+        "--notify",
+        action="store_true",
+        help="Send Telegram messages when target prices are reached.",
+    )
+    watch_parser.add_argument(
+        "--max-runs",
+        type=int,
+        help="Stop after this many checks. Useful for testing.",
+    )
+
+    telegram_parser = subparsers.add_parser(
+        "telegram",
+        help="Set up and test Telegram notifications.",
+    )
+    telegram_subparsers = telegram_parser.add_subparsers(dest="telegram_command")
+
+    telegram_subparsers.add_parser(
+        "chat-id",
+        help="Show chat IDs from recent messages sent to the bot.",
+    )
+
+    telegram_test_parser = telegram_subparsers.add_parser(
+        "send-test",
+        help="Send a test Telegram notification.",
+    )
+    telegram_test_parser.add_argument(
+        "--message",
+        default="Price watcher test notification.",
+        help="Text to send to Telegram.",
+    )
     return parser.parse_args()
 
 
@@ -148,36 +196,74 @@ def handle_watchlist_list(path: Path) -> int:
 
 
 def handle_watchlist_check(path: Path, notify: bool = False) -> int:
-    items = load_watchlist(path)
-
-    if not items:
-        print("Watchlist is empty.")
-        return 0
-
-    results = check_watchlist_items(items)
-
-    for result in results:
-        print(format_check_result(result))
-
-    if notify:
-        send_drop_notification(results)
-
-    failed_checks = sum(1 for result in results if result.price is None)
-    return 1 if failed_checks else 0
+    telegram_bot_token, telegram_chat_id = get_notification_credentials(notify)
+    result = run_watch_once(
+        watchlist_path=path,
+        notify=notify,
+        telegram_bot_token=telegram_bot_token,
+        telegram_chat_id=telegram_chat_id,
+    )
+    return 1 if result.failed_count else 0
 
 
-def send_drop_notification(results: list[PriceCheckResult]) -> None:
-    message = build_price_drop_message(results)
-    if message is None:
-        print("No price drops to notify.")
-        return
+def handle_watch(args: argparse.Namespace) -> int:
+    config = load_runtime_config()
+    interval_seconds = args.interval
+    if interval_seconds is None:
+        interval_seconds = config.check_interval_seconds
 
-    from price_watcher.config import load_config
+    telegram_bot_token = config.telegram_bot_token if args.notify else None
+    telegram_chat_id = config.telegram_chat_id if args.notify else None
 
-    config = load_config()
+    print(
+        f"Watching {args.file} every {interval_seconds} seconds. "
+        "Press Ctrl+C to stop."
+    )
+
+    try:
+        return run_watch_loop(
+            watchlist_path=args.file,
+            interval_seconds=interval_seconds,
+            notify=args.notify,
+            telegram_bot_token=telegram_bot_token,
+            telegram_chat_id=telegram_chat_id,
+            max_runs=args.max_runs,
+        )
+    except KeyboardInterrupt:
+        print("Stopped.")
+        return 130
+
+
+def get_notification_credentials(notify: bool) -> tuple[str | None, str | None]:
+    if not notify:
+        return None, None
+
+    config = load_runtime_config()
+    return config.telegram_bot_token, config.telegram_chat_id
+
+
+def handle_telegram_chat_id() -> int:
+    config = load_runtime_config()
+    if not config.telegram_bot_token:
+        raise ValueError("TELEGRAM_BOT_TOKEN must be set")
+
+    chats = get_telegram_chats(config.telegram_bot_token)
+    if not chats:
+        print("No chats found. Send any message to your bot, then run this again.")
+        return 1
+
+    for chat in chats:
+        name = f" ({chat.name})" if chat.name else ""
+        print(f"{chat.chat_id} [{chat.chat_type}]{name}")
+
+    return 0
+
+
+def handle_telegram_send_test(message: str) -> int:
+    config = load_runtime_config()
     if not config.telegram_bot_token or not config.telegram_chat_id:
         raise ValueError(
-            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set to use --notify"
+            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set"
         )
 
     send_telegram_message(
@@ -185,7 +271,19 @@ def send_drop_notification(results: list[PriceCheckResult]) -> None:
         chat_id=config.telegram_chat_id,
         text=message,
     )
-    print("Telegram notification sent.")
+    print("Telegram test message sent.")
+    return 0
+
+
+def load_runtime_config() -> "Config":
+    try:
+        from price_watcher.config import load_config
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    return load_config()
 
 
 def main() -> int:
@@ -223,6 +321,18 @@ def dispatch(args: argparse.Namespace) -> int:
             return handle_watchlist_check(args.file, args.notify)
 
         print("Choose a watchlist command: add, list, or check.")
+        return 2
+
+    if args.command == "watch":
+        return handle_watch(args)
+
+    if args.command == "telegram":
+        if args.telegram_command == "chat-id":
+            return handle_telegram_chat_id()
+        if args.telegram_command == "send-test":
+            return handle_telegram_send_test(args.message)
+
+        print("Choose a telegram command: chat-id or send-test.")
         return 2
 
     print(f"Unknown command: {args.command}")
