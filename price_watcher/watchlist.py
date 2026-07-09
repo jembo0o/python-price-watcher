@@ -61,6 +61,29 @@ def upsert_watch_item(
     return updated_items
 
 
+def remove_watch_item(
+    app_id: int,
+    region: str | None = None,
+    path: Path = DEFAULT_WATCHLIST_PATH,
+) -> tuple[list[WatchItem], int]:
+    items = load_watchlist(path)
+    remaining_items: list[WatchItem] = []
+    removed_count = 0
+
+    for item in items:
+        region_matches = region is None or item.region == region
+        if item.app_id == app_id and region_matches:
+            removed_count += 1
+            continue
+
+        remaining_items.append(item)
+
+    if removed_count:
+        save_watchlist(remaining_items, path)
+
+    return remaining_items, removed_count
+
+
 def _parse_watch_item(raw_item: Any) -> WatchItem:
     if not isinstance(raw_item, dict):
         raise ValueError("Watchlist item must be a JSON object")

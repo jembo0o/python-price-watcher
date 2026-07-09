@@ -31,6 +31,12 @@ Add a game to the watchlist:
 python -m price_watcher.cli watchlist add --app-id 1245620 --target-price 29.99 --region us
 ```
 
+Remove a game from the watchlist:
+
+```bash
+python -m price_watcher.cli watchlist remove --app-id 1245620
+```
+
 List saved games:
 
 ```bash
@@ -66,6 +72,10 @@ Send a Telegram notification when a target price is reached:
 ```bash
 python -m price_watcher.cli watchlist check --notify
 ```
+
+Notification state is saved to `state.json`. A Telegram notification is sent only
+when a game reaches the target price for the first time, or when the current
+price is lower than the price from the previous notification.
 
 Find your Telegram chat ID after sending a message to the bot:
 

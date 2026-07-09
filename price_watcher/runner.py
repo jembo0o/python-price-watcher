@@ -13,6 +13,12 @@ from price_watcher.checker import (
     format_check_result,
 )
 from price_watcher.notifier import send_telegram_message
+from price_watcher.state import (
+    DEFAULT_STATE_PATH,
+    filter_notifiable_results,
+    load_notification_state,
+    mark_results_as_notified,
+)
 from price_watcher.watchlist import load_watchlist
 
 
@@ -32,6 +38,7 @@ def run_watch_once(
     notify: bool = False,
     telegram_bot_token: str | None = None,
     telegram_chat_id: str | None = None,
+    state_path: Path = DEFAULT_STATE_PATH,
     output: OutputWriter = print,
     fetcher: PriceFetcher | None = None,
 ) -> WatchRunResult:
@@ -54,6 +61,7 @@ def run_watch_once(
             results=results,
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
+            state_path=state_path,
             output=output,
         )
 
@@ -71,6 +79,7 @@ def run_watch_loop(
     notify: bool = False,
     telegram_bot_token: str | None = None,
     telegram_chat_id: str | None = None,
+    state_path: Path = DEFAULT_STATE_PATH,
     max_runs: int | None = None,
     output: OutputWriter = print,
     sleeper: Sleeper = time.sleep,
@@ -94,6 +103,7 @@ def run_watch_loop(
             notify=notify,
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
+            state_path=state_path,
             output=output,
             fetcher=fetcher,
         )
@@ -112,11 +122,14 @@ def send_drop_notification(
     results: list[PriceCheckResult],
     telegram_bot_token: str | None,
     telegram_chat_id: str | None,
+    state_path: Path = DEFAULT_STATE_PATH,
     output: OutputWriter = print,
 ) -> bool:
-    message = build_price_drop_message(results)
+    state = load_notification_state(state_path)
+    notifiable_results = filter_notifiable_results(results, state)
+    message = build_price_drop_message(notifiable_results)
     if message is None:
-        output("No price drops to notify.")
+        output("No new price drops to notify.")
         return False
 
     if not telegram_bot_token or not telegram_chat_id:
@@ -129,5 +142,6 @@ def send_drop_notification(
         chat_id=telegram_chat_id,
         text=message,
     )
+    mark_results_as_notified(state, notifiable_results, state_path)
     output("Telegram notification sent.")
     return True

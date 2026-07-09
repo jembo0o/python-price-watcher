@@ -8,10 +8,12 @@ from price_watcher.checker import (
 )
 from price_watcher.notifier import get_telegram_chats, send_telegram_message
 from price_watcher.runner import run_watch_loop, run_watch_once
+from price_watcher.state import DEFAULT_STATE_PATH, remove_notification_state
 from price_watcher.watchlist import (
     DEFAULT_WATCHLIST_PATH,
     WatchItem,
     load_watchlist,
+    remove_watch_item,
     upsert_watch_item,
 )
 
@@ -71,6 +73,28 @@ def parse_args() -> argparse.Namespace:
         help="Path to watchlist JSON file.",
     )
 
+    watchlist_remove_parser = watchlist_subparsers.add_parser(
+        "remove",
+        help="Remove a game from the watchlist.",
+    )
+    watchlist_remove_parser.add_argument("--app-id", type=int, required=True)
+    watchlist_remove_parser.add_argument(
+        "--region",
+        help="Remove only this region. If omitted, all regions for app ID are removed.",
+    )
+    watchlist_remove_parser.add_argument(
+        "--file",
+        type=Path,
+        default=DEFAULT_WATCHLIST_PATH,
+        help="Path to watchlist JSON file.",
+    )
+    watchlist_remove_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=DEFAULT_STATE_PATH,
+        help="Path to notification state JSON file.",
+    )
+
     watchlist_list_parser = watchlist_subparsers.add_parser(
         "list",
         help="Show saved watchlist items.",
@@ -93,6 +117,12 @@ def parse_args() -> argparse.Namespace:
         help="Path to watchlist JSON file.",
     )
     watchlist_check_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=DEFAULT_STATE_PATH,
+        help="Path to notification state JSON file.",
+    )
+    watchlist_check_parser.add_argument(
         "--notify",
         action="store_true",
         help="Send a Telegram message when a target price is reached.",
@@ -107,6 +137,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_WATCHLIST_PATH,
         help="Path to watchlist JSON file.",
+    )
+    watch_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=DEFAULT_STATE_PATH,
+        help="Path to notification state JSON file.",
     )
     watch_parser.add_argument(
         "--interval",
@@ -195,13 +231,44 @@ def handle_watchlist_list(path: Path) -> int:
     return 0
 
 
-def handle_watchlist_check(path: Path, notify: bool = False) -> int:
+def handle_watchlist_remove(args: argparse.Namespace) -> int:
+    _, removed_count = remove_watch_item(
+        app_id=args.app_id,
+        region=args.region,
+        path=args.file,
+    )
+    _, removed_state_count = remove_notification_state(
+        app_id=args.app_id,
+        region=args.region,
+        path=args.state_file,
+    )
+
+    if removed_count == 0:
+        target = f"{args.app_id}"
+        if args.region:
+            target = f"{target} [{args.region}]"
+        print(f"No watchlist item found for {target}.")
+    else:
+        print(f"Removed {removed_count} watchlist item(s).")
+
+    if removed_state_count:
+        print(f"Removed {removed_state_count} notification state item(s).")
+
+    return 0
+
+
+def handle_watchlist_check(
+    path: Path,
+    state_path: Path,
+    notify: bool = False,
+) -> int:
     telegram_bot_token, telegram_chat_id = get_notification_credentials(notify)
     result = run_watch_once(
         watchlist_path=path,
         notify=notify,
         telegram_bot_token=telegram_bot_token,
         telegram_chat_id=telegram_chat_id,
+        state_path=state_path,
     )
     return 1 if result.failed_count else 0
 
@@ -227,6 +294,7 @@ def handle_watch(args: argparse.Namespace) -> int:
             notify=args.notify,
             telegram_bot_token=telegram_bot_token,
             telegram_chat_id=telegram_chat_id,
+            state_path=args.state_file,
             max_runs=args.max_runs,
         )
     except KeyboardInterrupt:
@@ -315,12 +383,14 @@ def dispatch(args: argparse.Namespace) -> int:
     if args.command == "watchlist":
         if args.watchlist_command == "add":
             return handle_watchlist_add(args)
+        if args.watchlist_command == "remove":
+            return handle_watchlist_remove(args)
         if args.watchlist_command == "list":
             return handle_watchlist_list(args.file)
         if args.watchlist_command == "check":
-            return handle_watchlist_check(args.file, args.notify)
+            return handle_watchlist_check(args.file, args.state_file, args.notify)
 
-        print("Choose a watchlist command: add, list, or check.")
+        print("Choose a watchlist command: add, remove, list, or check.")
         return 2
 
     if args.command == "watch":
