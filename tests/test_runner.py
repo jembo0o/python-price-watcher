@@ -12,6 +12,7 @@ from price_watcher.watchlist import WatchItem, save_watchlist
 @dataclass(frozen=True)
 class FakeGamePrice:
     app_id: int
+    name: str
     price_cents: int
     currency: str
     formatted: str
@@ -38,7 +39,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(result.failed_count, 0)
             self.assertEqual(
                 output_lines,
-                ["WAIT: 1245620 [us] $59.99 > 29.99 USD"],
+                ["WAIT: ELDEN RING (1245620) [us] $59.99 > 29.99 USD"],
             )
 
     def test_run_watch_loop_stops_after_max_runs(self) -> None:
@@ -160,6 +161,7 @@ class RunnerTests(unittest.TestCase):
         def fetcher(app_id: int, region: str) -> FakeGamePrice:
             return FakeGamePrice(
                 app_id=app_id,
+                name="ELDEN RING",
                 price_cents=price_cents,
                 currency="USD",
                 formatted=f"${price_cents / 100:.2f}",

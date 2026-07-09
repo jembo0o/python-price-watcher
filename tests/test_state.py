@@ -17,6 +17,7 @@ from price_watcher.watchlist import WatchItem
 @dataclass(frozen=True)
 class FakeGamePrice:
     app_id: int
+    name: str
     price_cents: int
     currency: str
     formatted: str
@@ -132,6 +133,7 @@ class StateTests(unittest.TestCase):
         def fetcher(app_id: int, region: str) -> FakeGamePrice:
             return FakeGamePrice(
                 app_id=app_id,
+                name="ELDEN RING",
                 price_cents=price_cents,
                 currency="USD",
                 formatted=f"${price_cents / 100:.2f}",

@@ -12,6 +12,7 @@ from price_watcher.watchlist import WatchItem
 @dataclass(frozen=True)
 class FakeGamePrice:
     app_id: int
+    name: str
     price_cents: int
     currency: str
     formatted: str
@@ -47,7 +48,7 @@ class CheckerTests(unittest.TestCase):
 
         self.assertEqual(
             format_check_result(result),
-            "DROP: 1245620 [us] $19.99 <= 29.99 USD",
+            "DROP: ELDEN RING (1245620) [us] $19.99 <= 29.99 USD",
         )
 
     def test_build_price_drop_message_returns_none_without_drops(self) -> None:
@@ -61,6 +62,7 @@ class CheckerTests(unittest.TestCase):
         def fetcher(app_id: int, region: str) -> FakeGamePrice:
             return FakeGamePrice(
                 app_id=app_id,
+                name="ELDEN RING",
                 price_cents=price_cents,
                 currency="USD",
                 formatted=f"${price_cents / 100:.2f}",

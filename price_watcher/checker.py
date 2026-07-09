@@ -55,15 +55,16 @@ def format_check_result(result: PriceCheckResult) -> str:
     if result.price is None:
         return f"{item.app_id} [{item.region}]: price not found"
 
+    game_label = format_game_label(item.app_id, result.price.name)
     target = format_cents(item.target_price_cents, result.price.currency)
     if result.is_target_met:
         return (
-            f"DROP: {item.app_id} [{item.region}] "
+            f"DROP: {game_label} [{item.region}] "
             f"{result.price.formatted} <= {target}"
         )
 
     return (
-        f"WAIT: {item.app_id} [{item.region}] "
+        f"WAIT: {game_label} [{item.region}] "
         f"{result.price.formatted} > {target}"
     )
 
@@ -86,3 +87,10 @@ def format_cents(price_cents: int, currency: str | None = None) -> str:
     if currency is None:
         return formatted
     return f"{formatted} {currency}"
+
+
+def format_game_label(app_id: int, name: str | None = None) -> str:
+    if name:
+        return f"{name} ({app_id})"
+
+    return str(app_id)

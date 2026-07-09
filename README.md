@@ -25,6 +25,12 @@ Fetch one price:
 python -m price_watcher.cli price --app-id 1245620 --region us
 ```
 
+Search games by title:
+
+```bash
+python -m price_watcher.cli search --query "elden ring" --region us
+```
+
 Add a game to the watchlist:
 
 ```bash

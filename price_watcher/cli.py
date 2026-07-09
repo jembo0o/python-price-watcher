@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from price_watcher.checker import (
     format_cents,
+    format_game_label,
 )
 from price_watcher.notifier import get_telegram_chats, send_telegram_message
 from price_watcher.runner import run_watch_loop, run_watch_once
@@ -47,6 +48,27 @@ def parse_args() -> argparse.Namespace:
         "--region",
         default="us",
         help="Steam region/country code, for example us, de, ro.",
+    )
+
+    search_parser = subparsers.add_parser(
+        "search",
+        help="Search Steam games by title.",
+    )
+    search_parser.add_argument(
+        "--query",
+        required=True,
+        help="Game title to search for, for example 'elden ring'.",
+    )
+    search_parser.add_argument(
+        "--region",
+        default="us",
+        help="Steam region/country code, for example us, de, ro.",
+    )
+    search_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum number of results to show.",
     )
 
     watchlist_parser = subparsers.add_parser(
@@ -197,7 +219,30 @@ def handle_price(app_id: int, region: str) -> int:
         print(f"{app_id}: price not found")
         return 1
 
-    print(f"{price.app_id}: {price.formatted}")
+    print(f"{format_game_label(price.app_id, price.name)}: {price.formatted}")
+    return 0
+
+
+def handle_search(query: str, region: str, limit: int) -> int:
+    try:
+        from price_watcher.steam_client import search_games
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    if limit <= 0:
+        raise ValueError("Limit must be greater than 0")
+
+    results = search_games(query=query, region=region, limit=limit)
+    if not results:
+        print("No games found.")
+        return 1
+
+    for result in results:
+        price = result.price if result.price is not None else "no price"
+        print(f"{format_game_label(result.app_id, result.name)}: {price}")
+
     return 0
 
 
@@ -379,6 +424,9 @@ def dispatch(args: argparse.Namespace) -> int:
 
     if args.command == "price":
         return handle_price(args.app_id, args.region)
+
+    if args.command == "search":
+        return handle_search(args.query, args.region, args.limit)
 
     if args.command == "watchlist":
         if args.watchlist_command == "add":
