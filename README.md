@@ -25,6 +25,9 @@ Fetch one price:
 python -m price_watcher.cli price --app-id 1245620 --region us
 ```
 
+Regions use Steam country codes. Ukraine is `ua`; `eu` is supported as a
+convenience alias for the Euro storefront.
+
 Search games by title:
 
 ```bash

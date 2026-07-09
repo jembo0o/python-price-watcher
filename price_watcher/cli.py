@@ -8,6 +8,7 @@ from price_watcher.checker import (
     format_game_label,
 )
 from price_watcher.notifier import get_telegram_chats, send_telegram_message
+from price_watcher.regions import normalize_region
 from price_watcher.runner import run_watch_loop, run_watch_once
 from price_watcher.state import DEFAULT_STATE_PATH, remove_notification_state
 from price_watcher.watchlist import (
@@ -32,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--region",
         default="us",
-        help="Steam region/country code, for example us, de, ro.",
+        help="Steam region/country code, for example us, ua, eu.",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -47,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     price_parser.add_argument(
         "--region",
         default="us",
-        help="Steam region/country code, for example us, de, ro.",
+        help="Steam region/country code, for example us, ua, eu.",
     )
 
     search_parser = subparsers.add_parser(
@@ -62,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     search_parser.add_argument(
         "--region",
         default="us",
-        help="Steam region/country code, for example us, de, ro.",
+        help="Steam region/country code, for example us, ua, eu.",
     )
     search_parser.add_argument(
         "--limit",
@@ -213,7 +214,7 @@ def handle_price(app_id: int, region: str) -> int:
             "Install dependencies with: pip install -r requirements.txt"
         ) from exc
 
-    price = fetch_game_price(app_id, region)
+    price = fetch_game_price(app_id, normalize_region(region))
 
     if price is None:
         print(f"{app_id}: price not found")
@@ -234,7 +235,7 @@ def handle_search(query: str, region: str, limit: int) -> int:
     if limit <= 0:
         raise ValueError("Limit must be greater than 0")
 
-    results = search_games(query=query, region=region, limit=limit)
+    results = search_games(query=query, region=normalize_region(region), limit=limit)
     if not results:
         print("No games found.")
         return 1
@@ -251,7 +252,7 @@ def handle_watchlist_add(args: argparse.Namespace) -> int:
     item = WatchItem(
         app_id=args.app_id,
         target_price_cents=target_price_cents,
-        region=args.region,
+        region=normalize_region(args.region),
     )
 
     upsert_watch_item(item, args.file)
@@ -277,21 +278,22 @@ def handle_watchlist_list(path: Path) -> int:
 
 
 def handle_watchlist_remove(args: argparse.Namespace) -> int:
+    region = normalize_region(args.region) if args.region is not None else None
     _, removed_count = remove_watch_item(
         app_id=args.app_id,
-        region=args.region,
+        region=region,
         path=args.file,
     )
     _, removed_state_count = remove_notification_state(
         app_id=args.app_id,
-        region=args.region,
+        region=region,
         path=args.state_file,
     )
 
     if removed_count == 0:
         target = f"{args.app_id}"
-        if args.region:
-            target = f"{target} [{args.region}]"
+        if region:
+            target = f"{target} [{region}]"
         print(f"No watchlist item found for {target}.")
     else:
         print(f"Removed {removed_count} watchlist item(s).")

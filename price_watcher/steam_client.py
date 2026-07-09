@@ -1,5 +1,9 @@
 from dataclasses import dataclass
+from difflib import SequenceMatcher
+import re
 from typing import Any
+
+from price_watcher.regions import get_steam_country_code
 
 
 STEAM_APPDETAILS_URL = "https://store.steampowered.com/api/appdetails"
@@ -24,9 +28,10 @@ class GameSearchResult:
 
 
 def fetch_game_price(app_id: int, region: str = "us") -> GamePrice | None:
+    steam_country_code = get_steam_country_code(region)
     params = {
         "appids": app_id,
-        "cc": region,
+        "cc": steam_country_code,
         "filters": "basic,price_overview",
     }
 
@@ -85,9 +90,23 @@ def search_games(
     region: str = "us",
     limit: int = 10,
 ) -> list[GameSearchResult]:
-    if not query.strip() or limit <= 0:
+    normalized_query = query.strip()
+    if not normalized_query or limit <= 0:
         return []
 
+    steam_country_code = get_steam_country_code(region)
+    results = _search_games_once(normalized_query, steam_country_code, limit)
+    if results:
+        return results
+
+    return _search_games_by_tokens(normalized_query, steam_country_code, limit)
+
+
+def _search_games_once(
+    query: str,
+    region: str,
+    limit: int,
+) -> list[GameSearchResult]:
     params = {
         "term": query,
         "cc": region,
@@ -125,6 +144,28 @@ def search_games(
     return results
 
 
+def _search_games_by_tokens(
+    query: str,
+    region: str,
+    limit: int,
+) -> list[GameSearchResult]:
+    tokens = _get_search_tokens(query)
+    if not tokens:
+        return []
+
+    candidates: dict[int, GameSearchResult] = {}
+    for token in tokens:
+        for result in _search_games_once(token, region, limit * 3):
+            candidates.setdefault(result.app_id, result)
+
+    ranked_results = sorted(
+        candidates.values(),
+        key=lambda result: _get_search_score(query, result.name),
+        reverse=True,
+    )
+    return ranked_results[:limit]
+
+
 def _get_json(url: str, params: dict[str, Any]) -> dict[str, Any] | None:
     try:
         import requests
@@ -150,6 +191,40 @@ def _get_optional_string(value: Any) -> str | None:
     if isinstance(value, str) and value:
         return value
     return None
+
+
+def _get_search_tokens(query: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[a-zA-Z0-9]+", query.lower())
+        if len(token) >= 3
+    ][:3]
+
+
+def _get_search_score(query: str, name: str) -> float:
+    normalized_query = _normalize_search_text(query)
+    normalized_name = _normalize_search_text(name)
+    sequence_score = SequenceMatcher(None, normalized_query, normalized_name).ratio()
+
+    query_tokens = _get_search_tokens(query)
+    name_tokens = _get_search_tokens(name)
+    if not query_tokens or not name_tokens:
+        return sequence_score
+
+    token_scores = [
+        max(
+            SequenceMatcher(None, query_token, name_token).ratio()
+            for name_token in name_tokens
+        )
+        for query_token in query_tokens
+    ]
+    token_score = sum(token_scores) / len(token_scores)
+
+    return (token_score * 0.7) + (sequence_score * 0.3)
+
+
+def _normalize_search_text(value: str) -> str:
+    return " ".join(_get_search_tokens(value))
 
 
 def _get_app_id(value: Any) -> int | None:
