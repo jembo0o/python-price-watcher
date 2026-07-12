@@ -82,8 +82,16 @@ def parse_args() -> argparse.Namespace:
         "add",
         help="Add or update a game in the watchlist.",
     )
-    watchlist_add_parser.add_argument("--app-id", type=int, required=True)
-    watchlist_add_parser.add_argument("--region", default="us")
+    watchlist_add_parser.add_argument("--app-id", type=int)
+    watchlist_add_parser.add_argument(
+        "--query",
+        help="Find a Steam game by title and add the best match.",
+    )
+    watchlist_add_parser.add_argument(
+        "--region",
+        default="us",
+        help="Steam region/country code, for example us, ua, eu.",
+    )
     watchlist_add_parser.add_argument(
         "--target-price",
         required=True,
@@ -249,18 +257,78 @@ def handle_search(query: str, region: str, limit: int) -> int:
 
 def handle_watchlist_add(args: argparse.Namespace) -> int:
     target_price_cents = _parse_price_to_cents(args.target_price)
+    region = normalize_region(args.region)
+    app_id, name = resolve_watchlist_game(args.app_id, args.query, region)
     item = WatchItem(
-        app_id=args.app_id,
+        app_id=app_id,
         target_price_cents=target_price_cents,
-        region=normalize_region(args.region),
+        region=region,
+        name=name,
     )
 
     upsert_watch_item(item, args.file)
     print(
-        f"{item.app_id} [{item.region}] saved "
+        f"{format_game_label(item.app_id, item.name)} [{item.region}] saved "
         f"with target <= {format_cents(item.target_price_cents)}"
     )
     return 0
+
+
+def resolve_watchlist_game(
+    app_id: int | None,
+    query: str | None,
+    region: str,
+) -> tuple[int, str | None]:
+    if app_id is None and query is None:
+        raise ValueError("Provide --app-id or --query")
+
+    if app_id is not None and query is not None:
+        raise ValueError("Use either --app-id or --query, not both")
+
+    if query is not None:
+        return resolve_watchlist_game_by_query(query, region)
+
+    if app_id is None:
+        raise ValueError("Provide --app-id or --query")
+
+    return resolve_watchlist_game_by_app_id(app_id, region)
+
+
+def resolve_watchlist_game_by_query(query: str, region: str) -> tuple[int, str | None]:
+    try:
+        from price_watcher.steam_client import search_games
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    results = search_games(query=query, region=region, limit=1)
+    if not results:
+        raise ValueError(f"No Steam game found for query: {query}")
+
+    result = results[0]
+    print(f"Matched {format_game_label(result.app_id, result.name)}")
+    return result.app_id, result.name
+
+
+def resolve_watchlist_game_by_app_id(
+    app_id: int,
+    region: str,
+) -> tuple[int, str | None]:
+    try:
+        from price_watcher.steam_client import fetch_game_price
+    except ImportError:
+        return app_id, None
+
+    try:
+        price = fetch_game_price(app_id, region)
+    except RuntimeError:
+        return app_id, None
+
+    if price is None:
+        return app_id, None
+
+    return app_id, price.name
 
 
 def handle_watchlist_list(path: Path) -> int:
@@ -272,7 +340,10 @@ def handle_watchlist_list(path: Path) -> int:
 
     for item in items:
         target = format_cents(item.target_price_cents)
-        print(f"{item.app_id} [{item.region}] target <= {target}")
+        print(
+            f"{format_game_label(item.app_id, item.name)} "
+            f"[{item.region}] target <= {target}"
+        )
 
     return 0
 

@@ -20,11 +20,29 @@ class WatchlistTests(unittest.TestCase):
     def test_upsert_adds_new_item(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "watchlist.json"
-            item = WatchItem(app_id=1245620, target_price_cents=2999, region="us")
+            item = WatchItem(
+                app_id=1245620,
+                target_price_cents=2999,
+                region="us",
+                name="ELDEN RING",
+            )
 
             upsert_watch_item(item, path)
 
             self.assertEqual(load_watchlist(path), [item])
+
+    def test_load_watchlist_supports_items_without_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "watchlist.json"
+            path.write_text(
+                '[{"app_id": 1245620, "target_price_cents": 2999, "region": "us"}]',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                load_watchlist(path),
+                [WatchItem(app_id=1245620, target_price_cents=2999, region="us")],
+            )
 
     def test_upsert_updates_existing_item_for_same_app_and_region(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

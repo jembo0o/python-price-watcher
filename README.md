@@ -40,6 +40,12 @@ Add a game to the watchlist:
 python -m price_watcher.cli watchlist add --app-id 1245620 --target-price 29.99 --region us
 ```
 
+Add a game to the watchlist by title:
+
+```bash
+python -m price_watcher.cli watchlist add --query "elden ring" --target-price 29.99 --region eu
+```
+
 Remove a game from the watchlist:
 
 ```bash

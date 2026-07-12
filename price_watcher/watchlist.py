@@ -12,6 +12,7 @@ class WatchItem:
     app_id: int
     target_price_cents: int
     region: str = "us"
+    name: str | None = None
 
 
 def load_watchlist(path: Path = DEFAULT_WATCHLIST_PATH) -> list[WatchItem]:
@@ -90,6 +91,7 @@ def _parse_watch_item(raw_item: Any) -> WatchItem:
 
     app_id = raw_item.get("app_id")
     region = raw_item.get("region", "us")
+    name = raw_item.get("name")
     target_price_cents = raw_item.get("target_price_cents")
 
     if not isinstance(app_id, int):
@@ -101,8 +103,12 @@ def _parse_watch_item(raw_item: Any) -> WatchItem:
     if not isinstance(target_price_cents, int):
         raise ValueError("Watchlist item field 'target_price_cents' must be an integer")
 
+    if name is not None and not isinstance(name, str):
+        raise ValueError("Watchlist item field 'name' must be a string")
+
     return WatchItem(
         app_id=app_id,
         target_price_cents=target_price_cents,
         region=region,
+        name=name,
     )

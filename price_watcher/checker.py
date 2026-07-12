@@ -53,9 +53,10 @@ def format_check_result(result: PriceCheckResult) -> str:
     item = result.item
 
     if result.price is None:
-        return f"{item.app_id} [{item.region}]: price not found"
+        game_label = format_game_label(item.app_id, item.name)
+        return f"{game_label} [{item.region}]: price not found"
 
-    game_label = format_game_label(item.app_id, result.price.name)
+    game_label = format_game_label(item.app_id, result.price.name or item.name)
     target = format_cents(item.target_price_cents, result.price.currency)
     if result.is_target_met:
         return (
