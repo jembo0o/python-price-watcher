@@ -78,6 +78,9 @@ def should_notify_about_result(
     if previous_state is None:
         return True
 
+    if previous_state.target_price_cents != result.item.target_price_cents:
+        return True
+
     return result.price.price_cents < previous_state.last_notified_price_cents
 
 

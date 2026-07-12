@@ -4,6 +4,7 @@ from typing import Any
 
 TELEGRAM_SEND_MESSAGE_URL = "https://api.telegram.org/bot{token}/sendMessage"
 TELEGRAM_GET_UPDATES_URL = "https://api.telegram.org/bot{token}/getUpdates"
+TELEGRAM_SET_COMMANDS_URL = "https://api.telegram.org/bot{token}/setMyCommands"
 
 
 @dataclass(frozen=True)
@@ -13,7 +14,14 @@ class TelegramChat:
     name: str | None = None
 
 
-def send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:
+@dataclass(frozen=True)
+class TelegramUpdate:
+    update_id: int
+    chat_id: int
+    text: str
+
+
+def send_telegram_message(bot_token: str, chat_id: str | int, text: str) -> None:
     if not bot_token:
         raise ValueError("Telegram bot token is required")
 
@@ -40,7 +48,67 @@ def send_telegram_message(bot_token: str, chat_id: str, text: str) -> None:
         raise RuntimeError("Telegram notification failed") from exc
 
 
+def get_telegram_updates(
+    bot_token: str,
+    offset: int | None = None,
+    timeout: int = 25,
+) -> list[TelegramUpdate]:
+    params: dict[str, Any] = {
+        "timeout": timeout,
+        "allowed_updates": '["message"]',
+    }
+    if offset is not None:
+        params["offset"] = offset
+
+    raw_updates = _fetch_telegram_updates(bot_token, params, timeout + 5)
+    return extract_telegram_messages(raw_updates)
+
+
+def set_telegram_commands(
+    bot_token: str,
+    commands: list[tuple[str, str]],
+) -> None:
+    if not bot_token:
+        raise ValueError("Telegram bot token is required")
+
+    try:
+        import requests
+
+        response = requests.post(
+            TELEGRAM_SET_COMMANDS_URL.format(token=bot_token),
+            json={
+                "commands": [
+                    {"command": command, "description": description}
+                    for command, description in commands
+                ]
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload: dict[str, Any] = response.json()
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+    except requests.RequestException as exc:
+        raise RuntimeError("Telegram command setup failed") from exc
+    except ValueError as exc:
+        raise RuntimeError("Telegram returned invalid JSON") from exc
+
+    if payload.get("ok") is not True:
+        raise RuntimeError("Telegram command setup failed")
+
+
 def get_telegram_chats(bot_token: str) -> list[TelegramChat]:
+    updates = _fetch_telegram_updates(bot_token, {}, 10)
+    return extract_telegram_chats(updates)
+
+
+def _fetch_telegram_updates(
+    bot_token: str,
+    params: dict[str, Any],
+    request_timeout: int,
+) -> list[Any]:
     if not bot_token:
         raise ValueError("Telegram bot token is required")
 
@@ -49,7 +117,8 @@ def get_telegram_chats(bot_token: str) -> list[TelegramChat]:
 
         response = requests.get(
             TELEGRAM_GET_UPDATES_URL.format(token=bot_token),
-            timeout=10,
+            params=params,
+            timeout=request_timeout,
         )
         response.raise_for_status()
         payload: dict[str, Any] = response.json()
@@ -69,7 +138,39 @@ def get_telegram_chats(bot_token: str) -> list[TelegramChat]:
     if not isinstance(updates, list):
         raise RuntimeError("Telegram getUpdates returned invalid data")
 
-    return extract_telegram_chats(updates)
+    return updates
+
+
+def extract_telegram_messages(updates: list[Any]) -> list[TelegramUpdate]:
+    messages: list[TelegramUpdate] = []
+
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+
+        update_id = update.get("update_id")
+        message = update.get("message")
+        if not isinstance(update_id, int) or not isinstance(message, dict):
+            continue
+
+        chat = message.get("chat")
+        text = message.get("text")
+        if not isinstance(chat, dict) or not isinstance(text, str):
+            continue
+
+        chat_id = chat.get("id")
+        if not isinstance(chat_id, int):
+            continue
+
+        messages.append(
+            TelegramUpdate(
+                update_id=update_id,
+                chat_id=chat_id,
+                text=text,
+            )
+        )
+
+    return messages
 
 
 def extract_telegram_chats(updates: list[Any]) -> list[TelegramChat]:

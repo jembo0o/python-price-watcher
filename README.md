@@ -1,14 +1,15 @@
 # price-watcher
 
-CLI utility for watching Steam product prices and preparing notifications when prices drop.
+Personal Steam price tracker with two interfaces:
 
-## Day 1
+- CLI for search, price checks, and watchlist management;
+- Telegram bot with the same operations and automatic price-drop alerts.
 
-- Project structure
-- Minimal dependencies
-- Environment-based configuration
+Both interfaces use `PriceWatcherService`, `watchlist.json`, and `state.json`.
+The service is independent from Telegram and `argparse`, so it can later be
+wrapped by FastAPI for a website or browser extension.
 
-## Local setup
+## Setup
 
 ```bash
 python -m venv .venv
@@ -17,89 +18,73 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-## Usage
+Configure `.env`:
 
-Fetch one price:
-
-```bash
-python -m price_watcher.cli price --app-id 1245620 --region us
+```dotenv
+TELEGRAM_BOT_TOKEN=your_new_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+CHECK_INTERVAL_SECONDS=3600
+STEAM_REGION=eu
 ```
 
-Regions use Steam country codes. Ukraine is `ua`; `eu` is supported as a
-convenience alias for the Euro storefront.
+The full Telegram and PyCharm setup is in
+[docs/telegram-guide-ru.md](docs/telegram-guide-ru.md).
 
-Search games by title:
-
-```bash
-python -m price_watcher.cli search --query "elden ring" --region us
-```
-
-Add a game to the watchlist:
-
-```bash
-python -m price_watcher.cli watchlist add --app-id 1245620 --target-price 29.99 --region us
-```
-
-Add a game to the watchlist by title:
-
-```bash
-python -m price_watcher.cli watchlist add --query "elden ring" --target-price 29.99 --region eu
-```
-
-Remove a game from the watchlist:
-
-```bash
-python -m price_watcher.cli watchlist remove --app-id 1245620
-```
-
-List saved games:
-
-```bash
-python -m price_watcher.cli watchlist list
-```
-
-Check the watchlist:
-
-```bash
-python -m price_watcher.cli watchlist check
-```
-
-Run continuous checks using `CHECK_INTERVAL_SECONDS` from `.env`:
-
-```bash
-python -m price_watcher.cli watch
-```
-
-Run continuous checks with Telegram notifications:
-
-```bash
-python -m price_watcher.cli watch --notify
-```
-
-Run two checks and stop:
-
-```bash
-python -m price_watcher.cli watch --max-runs 2
-```
-
-Send a Telegram notification when a target price is reached:
-
-```bash
-python -m price_watcher.cli watchlist check --notify
-```
-
-Notification state is saved to `state.json`. A Telegram notification is sent only
-when a game reaches the target price for the first time, or when the current
-price is lower than the price from the previous notification.
-
-Find your Telegram chat ID after sending a message to the bot:
+## Telegram bot
 
 ```bash
 python -m price_watcher.cli telegram chat-id
+python -m price_watcher.cli telegram send-test
+python -m price_watcher.cli telegram bot
 ```
 
-Send a test Telegram message:
+Telegram commands:
+
+```text
+/search Elden Ring
+/search region=ua Elden Ring
+/price 1245620 region=eu
+/add 29.99 region=eu Elden Ring
+/list
+/remove 1245620 region=eu
+/check
+```
+
+`telegram bot` performs automatic checks using `CHECK_INTERVAL_SECONDS`. It
+sends an alert only when a target is reached for the first time, or when the
+price falls below the price from the previous alert.
+
+## CLI
 
 ```bash
-python -m price_watcher.cli telegram send-test
+python -m price_watcher.cli search --query "elden ring" --region eu
+python -m price_watcher.cli price --app-id 1245620 --region eu
+python -m price_watcher.cli watchlist add --query "elden ring" --target-price 29.99 --region eu
+python -m price_watcher.cli watchlist list
+python -m price_watcher.cli watchlist check
+python -m price_watcher.cli watchlist remove --app-id 1245620 --region eu
+python -m price_watcher.cli watch --notify
 ```
+
+Regions use Steam country codes. `ua` selects Ukraine. `eu` is a convenience
+alias that currently uses Germany's euro storefront.
+
+## Tests
+
+```bash
+python -m unittest
+```
+
+## Architecture
+
+```text
+CLI (cli.py) ---------+
+                     +--> PriceWatcherService --> Steam client
+Telegram bot --------+             |
+                                   +--> watchlist.json
+                                   +--> state.json
+                                   +--> price checker
+```
+
+`watchlist.json`, `state.json`, and `.env` are local runtime files and are not
+committed to Git.

@@ -1,5 +1,4 @@
 import argparse
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -7,17 +6,13 @@ from price_watcher.checker import (
     format_cents,
     format_game_label,
 )
+from price_watcher.money import parse_price_to_cents
 from price_watcher.notifier import get_telegram_chats, send_telegram_message
 from price_watcher.regions import normalize_region
 from price_watcher.runner import run_watch_loop, run_watch_once
-from price_watcher.state import DEFAULT_STATE_PATH, remove_notification_state
-from price_watcher.watchlist import (
-    DEFAULT_WATCHLIST_PATH,
-    WatchItem,
-    load_watchlist,
-    remove_watch_item,
-    upsert_watch_item,
-)
+from price_watcher.service import PriceWatcherService
+from price_watcher.state import DEFAULT_STATE_PATH
+from price_watcher.watchlist import DEFAULT_WATCHLIST_PATH
 
 if TYPE_CHECKING:
     from price_watcher.config import Config
@@ -211,18 +206,44 @@ def parse_args() -> argparse.Namespace:
         default="Price watcher test notification.",
         help="Text to send to Telegram.",
     )
+
+    telegram_bot_parser = telegram_subparsers.add_parser(
+        "bot",
+        help="Run the interactive Telegram bot and price checks.",
+    )
+    telegram_bot_parser.add_argument(
+        "--file",
+        type=Path,
+        default=DEFAULT_WATCHLIST_PATH,
+        help="Path to watchlist JSON file.",
+    )
+    telegram_bot_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=DEFAULT_STATE_PATH,
+        help="Path to notification state JSON file.",
+    )
+    telegram_bot_parser.add_argument(
+        "--interval",
+        type=int,
+        help="Seconds between automatic price checks.",
+    )
+    telegram_bot_parser.add_argument(
+        "--poll-timeout",
+        type=int,
+        default=25,
+        help="Seconds for each Telegram long-poll request.",
+    )
+    telegram_bot_parser.add_argument(
+        "--max-cycles",
+        type=int,
+        help="Stop after this many poll cycles. Useful for testing.",
+    )
     return parser.parse_args()
 
 
 def handle_price(app_id: int, region: str) -> int:
-    try:
-        from price_watcher.steam_client import fetch_game_price
-    except ImportError as exc:
-        raise RuntimeError(
-            "Install dependencies with: pip install -r requirements.txt"
-        ) from exc
-
-    price = fetch_game_price(app_id, normalize_region(region))
+    price = PriceWatcherService().get_price(app_id, region)
 
     if price is None:
         print(f"{app_id}: price not found")
@@ -233,17 +254,7 @@ def handle_price(app_id: int, region: str) -> int:
 
 
 def handle_search(query: str, region: str, limit: int) -> int:
-    try:
-        from price_watcher.steam_client import search_games
-    except ImportError as exc:
-        raise RuntimeError(
-            "Install dependencies with: pip install -r requirements.txt"
-        ) from exc
-
-    if limit <= 0:
-        raise ValueError("Limit must be greater than 0")
-
-    results = search_games(query=query, region=normalize_region(region), limit=limit)
+    results = PriceWatcherService().search(query, region, limit)
     if not results:
         print("No games found.")
         return 1
@@ -256,17 +267,18 @@ def handle_search(query: str, region: str, limit: int) -> int:
 
 
 def handle_watchlist_add(args: argparse.Namespace) -> int:
-    target_price_cents = _parse_price_to_cents(args.target_price)
+    target_price_cents = parse_price_to_cents(args.target_price)
     region = normalize_region(args.region)
-    app_id, name = resolve_watchlist_game(args.app_id, args.query, region)
-    item = WatchItem(
-        app_id=app_id,
+    identifier = _get_watchlist_identifier(args.app_id, args.query)
+    service = PriceWatcherService(watchlist_path=args.file)
+    item = service.add_watch_item(
+        identifier=identifier,
         target_price_cents=target_price_cents,
         region=region,
-        name=name,
     )
 
-    upsert_watch_item(item, args.file)
+    if args.query is not None:
+        print(f"Matched {format_game_label(item.app_id, item.name)}")
     print(
         f"{format_game_label(item.app_id, item.name)} [{item.region}] saved "
         f"with target <= {format_cents(item.target_price_cents)}"
@@ -285,54 +297,15 @@ def resolve_watchlist_game(
     if app_id is not None and query is not None:
         raise ValueError("Use either --app-id or --query, not both")
 
-    if query is not None:
-        return resolve_watchlist_game_by_query(query, region)
-
-    if app_id is None:
+    identifier = app_id if app_id is not None else query
+    if identifier is None:
         raise ValueError("Provide --app-id or --query")
 
-    return resolve_watchlist_game_by_app_id(app_id, region)
-
-
-def resolve_watchlist_game_by_query(query: str, region: str) -> tuple[int, str | None]:
-    try:
-        from price_watcher.steam_client import search_games
-    except ImportError as exc:
-        raise RuntimeError(
-            "Install dependencies with: pip install -r requirements.txt"
-        ) from exc
-
-    results = search_games(query=query, region=region, limit=1)
-    if not results:
-        raise ValueError(f"No Steam game found for query: {query}")
-
-    result = results[0]
-    print(f"Matched {format_game_label(result.app_id, result.name)}")
-    return result.app_id, result.name
-
-
-def resolve_watchlist_game_by_app_id(
-    app_id: int,
-    region: str,
-) -> tuple[int, str | None]:
-    try:
-        from price_watcher.steam_client import fetch_game_price
-    except ImportError:
-        return app_id, None
-
-    try:
-        price = fetch_game_price(app_id, region)
-    except RuntimeError:
-        return app_id, None
-
-    if price is None:
-        return app_id, None
-
-    return app_id, price.name
+    return PriceWatcherService().resolve_game(identifier, region)
 
 
 def handle_watchlist_list(path: Path) -> int:
-    items = load_watchlist(path)
+    items = PriceWatcherService(watchlist_path=path).list_watch_items()
 
     if not items:
         print("Watchlist is empty.")
@@ -350,27 +323,24 @@ def handle_watchlist_list(path: Path) -> int:
 
 def handle_watchlist_remove(args: argparse.Namespace) -> int:
     region = normalize_region(args.region) if args.region is not None else None
-    _, removed_count = remove_watch_item(
+    result = PriceWatcherService(
+        watchlist_path=args.file,
+        state_path=args.state_file,
+    ).remove_watch_item(
         app_id=args.app_id,
         region=region,
-        path=args.file,
-    )
-    _, removed_state_count = remove_notification_state(
-        app_id=args.app_id,
-        region=region,
-        path=args.state_file,
     )
 
-    if removed_count == 0:
+    if result.removed_watch_items == 0:
         target = f"{args.app_id}"
         if region:
             target = f"{target} [{region}]"
         print(f"No watchlist item found for {target}.")
     else:
-        print(f"Removed {removed_count} watchlist item(s).")
+        print(f"Removed {result.removed_watch_items} watchlist item(s).")
 
-    if removed_state_count:
-        print(f"Removed {removed_state_count} notification state item(s).")
+    if result.removed_state_items:
+        print(f"Removed {result.removed_state_items} notification state item(s).")
 
     return 0
 
@@ -461,6 +431,41 @@ def handle_telegram_send_test(message: str) -> int:
     return 0
 
 
+def handle_telegram_bot(args: argparse.Namespace) -> int:
+    config = load_runtime_config()
+    if not config.telegram_bot_token or not config.telegram_chat_id:
+        raise ValueError(
+            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set"
+        )
+
+    interval_seconds = args.interval or config.check_interval_seconds
+
+    try:
+        from price_watcher.telegram_bot import TelegramPriceWatcherBot
+    except ImportError as exc:
+        raise RuntimeError(
+            "Install dependencies with: pip install -r requirements.txt"
+        ) from exc
+
+    bot = TelegramPriceWatcherBot(
+        bot_token=config.telegram_bot_token,
+        chat_id=config.telegram_chat_id,
+        service=PriceWatcherService(
+            watchlist_path=args.file,
+            state_path=args.state_file,
+        ),
+        default_region=config.steam_region,
+        check_interval_seconds=interval_seconds,
+        poll_timeout_seconds=args.poll_timeout,
+    )
+
+    try:
+        return bot.run(max_cycles=args.max_cycles)
+    except KeyboardInterrupt:
+        print("Telegram bot stopped.")
+        return 130
+
+
 def load_runtime_config() -> "Config":
     try:
         from price_watcher.config import load_config
@@ -522,28 +527,25 @@ def dispatch(args: argparse.Namespace) -> int:
             return handle_telegram_chat_id()
         if args.telegram_command == "send-test":
             return handle_telegram_send_test(args.message)
+        if args.telegram_command == "bot":
+            return handle_telegram_bot(args)
 
-        print("Choose a telegram command: chat-id or send-test.")
+        print("Choose a telegram command: chat-id, send-test, or bot.")
         return 2
 
     print(f"Unknown command: {args.command}")
     return 2
 
 
-def _parse_price_to_cents(raw_price: str) -> int:
-    try:
-        value = Decimal(raw_price)
-    except InvalidOperation as exc:
-        raise ValueError("Target price must be a decimal number") from exc
-
-    if value < 0:
-        raise ValueError("Target price must be greater than or equal to 0")
-
-    cents = value * Decimal("100")
-    if cents != cents.to_integral_value():
-        raise ValueError("Target price must have no more than two decimal places")
-
-    return int(cents)
+def _get_watchlist_identifier(
+    app_id: int | None,
+    query: str | None,
+) -> int | str:
+    if app_id is None and query is None:
+        raise ValueError("Provide --app-id or --query")
+    if app_id is not None and query is not None:
+        raise ValueError("Use either --app-id or --query, not both")
+    return app_id if app_id is not None else query or ""
 
 
 if __name__ == "__main__":

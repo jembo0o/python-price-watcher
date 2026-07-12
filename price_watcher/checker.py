@@ -72,7 +72,7 @@ def format_check_result(result: PriceCheckResult) -> str:
 
 def build_price_drop_message(results: list[PriceCheckResult]) -> str | None:
     drop_lines = [
-        format_check_result(result)
+        f"{format_check_result(result)}\n{build_steam_store_url(result.item.app_id)}"
         for result in results
         if result.is_target_met and result.price is not None
     ]
@@ -95,3 +95,7 @@ def format_game_label(app_id: int, name: str | None = None) -> str:
         return f"{name} ({app_id})"
 
     return str(app_id)
+
+
+def build_steam_store_url(app_id: int) -> str:
+    return f"https://store.steampowered.com/app/{app_id}"

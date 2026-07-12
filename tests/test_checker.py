@@ -2,6 +2,7 @@ import unittest
 from dataclasses import dataclass
 
 from price_watcher.checker import (
+    build_steam_store_url,
     build_price_drop_message,
     check_watchlist_items,
     format_check_result,
@@ -56,6 +57,15 @@ class CheckerTests(unittest.TestCase):
         results = check_watchlist_items([item], fetcher=self._fake_fetcher(5999))
 
         self.assertIsNone(build_price_drop_message(results))
+
+    def test_build_price_drop_message_includes_store_url(self) -> None:
+        item = WatchItem(app_id=1245620, target_price_cents=2999, region="us")
+        results = check_watchlist_items([item], fetcher=self._fake_fetcher(1999))
+
+        message = build_price_drop_message(results)
+
+        self.assertIsNotNone(message)
+        self.assertIn(build_steam_store_url(1245620), message or "")
 
     @staticmethod
     def _fake_fetcher(price_cents: int):

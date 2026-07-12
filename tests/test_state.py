@@ -61,6 +61,18 @@ class StateTests(unittest.TestCase):
 
         self.assertEqual(filter_notifiable_results([result], state), [result])
 
+    def test_changed_target_is_notifiable_as_a_new_condition(self) -> None:
+        item = WatchItem(app_id=1245620, target_price_cents=3999, region="us")
+        result = check_watchlist_items([item], fetcher=self._fake_fetcher(1999))[0]
+        state = {
+            "1245620:us": NotificationState(
+                last_notified_price_cents=1999,
+                target_price_cents=2999,
+            )
+        }
+
+        self.assertEqual(filter_notifiable_results([result], state), [result])
+
     def test_mark_results_as_notified_writes_state_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "state.json"

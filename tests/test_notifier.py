@@ -1,6 +1,11 @@
 import unittest
 
-from price_watcher.notifier import TelegramChat, extract_telegram_chats
+from price_watcher.notifier import (
+    TelegramChat,
+    TelegramUpdate,
+    extract_telegram_chats,
+    extract_telegram_messages,
+)
 
 
 class NotifierTests(unittest.TestCase):
@@ -31,6 +36,29 @@ class NotifierTests(unittest.TestCase):
         self.assertEqual(
             extract_telegram_chats(updates),
             [TelegramChat(chat_id=123, chat_type="private", name=None)],
+        )
+
+    def test_extract_telegram_messages_ignores_non_text_updates(self) -> None:
+        updates = [
+            {
+                "update_id": 10,
+                "message": {
+                    "chat": {"id": 123, "type": "private"},
+                    "text": "/list",
+                },
+            },
+            {
+                "update_id": 11,
+                "message": {
+                    "chat": {"id": 123, "type": "private"},
+                    "photo": [],
+                },
+            },
+        ]
+
+        self.assertEqual(
+            extract_telegram_messages(updates),
+            [TelegramUpdate(update_id=10, chat_id=123, text="/list")],
         )
 
 
